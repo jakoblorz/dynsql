@@ -17,18 +17,20 @@ const (
 	Boolean AbstractColumnType = "boolean"
 )
 
-type DYNSQLDriverQuerySet struct {
+type DriverQuerySet struct {
 	GetAllTableNames               string
 	GetAllColumnsFromTableName     string
 	AddColumnWithNameFromTableName func(string, AbstractColumnType) string
 	UpdateColumnTypeFromTableName  func(string, AbstractColumnType) string
+	
+	UpsertValuesOnTableNameWithColumnNames func(string[]) string
 
 	TranslateSQLType func(string) (AbstractColumnType, error)
 }
 
-type DYNSQLDriver struct {
+type Driver struct {
 	mountedOnDriver driver.Driver
-	driverQuerySet  DYNSQLDriverQuerySet
+	driverQuerySet  DriverQuerySet
 
 	polledTableSchemas map[string][]*ColumnDefinition
 }
@@ -38,14 +40,14 @@ type ColumnDefinition struct {
 	Type AbstractColumnType
 }
 
-func CreateDYNSQLDriver(mountedOnDriver driver.Driver, driverQuerySet DYNSQLDriverQuerySet) *DYNSQLDriver {
-	return &DYNSQLDriver{
+func CreateDriver(mountedOnDriver driver.Driver, driverQuerySet DriverQuerySet) *Driver {
+	return &Driver{
 		mountedOnDriver: mountedOnDriver,
 		driverQuerySet:  driverQuerySet,
 	}
 }
 
-func (d *DYNSQLDriver) pollDatabaseData(conn driver.Conn) error {
+func (d *Driver) pollDatabaseData(conn driver.Conn) error {
 	getAllTableNamesStmt, err := conn.Prepare(d.driverQuerySet.GetAllTableNames)
 	if err != nil {
 		return err
@@ -77,7 +79,7 @@ func (d *DYNSQLDriver) pollDatabaseData(conn driver.Conn) error {
 	return nil
 }
 
-func (d *DYNSQLDriver) pollColumnDefinitions(conn driver.Conn, tableName string) ([]*ColumnDefinition, error) {
+func (d *Driver) pollColumnDefinitions(conn driver.Conn, tableName string) ([]*ColumnDefinition, error) {
 	getAllColumnsFromTableNameStmt, err := conn.Prepare(d.driverQuerySet.GetAllColumnsFromTableName)
 	if err != nil {
 		return nil, err
@@ -128,7 +130,7 @@ func (d *DYNSQLDriver) pollColumnDefinitions(conn driver.Conn, tableName string)
 	return columnDefinitions, nil
 }
 
-func (d *DYNSQLDriver) Open(name string) (driver.Conn, error) {
+func (d *Driver) Open(name string) (driver.Conn, error) {
 	conn, err := d.mountedOnDriver.Open(name)
 	if err != nil {
 		return nil, err
