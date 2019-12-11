@@ -196,12 +196,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			c.d.schemas[tableName] = existingKeys
 		}
 
-		stmt, err := c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
-		if err != nil {
-			return nil, err
-		}
-
-		return stmt, nil
+		return c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
 	}
 
 	return c.c.Prepare(query)
@@ -210,6 +205,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 func (c *Conn) Close() error {
 	return c.c.Close()
 }
+
 func (c *Conn) Begin() (driver.Tx, error) {
 	return c.c.Begin()
 }
@@ -219,7 +215,7 @@ type connExecerQueryerPreparer struct {
 }
 
 func (c *connExecerQueryerPreparer) Prepare(query string) (driver.Stmt, error) {
-	return c.c.Prepare(query)
+	return c.c.c.Prepare(query)
 }
 
 func (c *connExecerQueryerPreparer) Exec(query string, args []driver.Value) (driver.Result, error) {
