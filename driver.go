@@ -10,26 +10,20 @@ var (
 	ErrFailedToParseString = errors.New("failed to parse string")
 )
 
-type DriverQueryDefinition struct {
-	GetAllTableNames               string
-	GetAllColumnsFromTableName     string
-	AddColumnWithNameFromTableName string
-
-	InsertValuesOnTableNameWithColumnNames func([]string) string
-}
-
 type Driver struct {
-	baseDriver driver.Driver
-	queries    DriverQueryDefinition
+	SQL SQLDialect
 
-	schemas map[string][]string
-	mu      sync.Locker
+	baseDriver driver.Driver
+	schemas    map[string]map[string]string
+	mu         *sync.RWMutex
 }
 
-func WrapDriver(baseDriver driver.Driver, queries DriverQueryDefinition) *Driver {
+func WrapDriver(baseDriver driver.Driver, sql SQLDialect) *Driver {
 	return &Driver{
+		SQL: sql,
+
 		baseDriver: baseDriver,
-		queries:    queries,
+		mu:         &sync.RWMutex{},
 	}
 }
 

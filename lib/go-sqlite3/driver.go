@@ -8,10 +8,5 @@ import (
 )
 
 func init() {
-	sql.Register("dyn-sqlite3", dynsql.WrapDriver(&sqlite3.SQLiteDriver{}, dynsql.DriverQueryDefinition{
-		GetAllTableNames:           ``,
-		GetAllColumnsFromTableName: ``,
-
-		TranslateSQLType: translateSQLType,
-	}))
+	sql.Register("dyn-sqlite3", dynsql.WrapDriver(&sqlite3.SQLiteDriver{}, SQLiteDialect(0)))
 }
