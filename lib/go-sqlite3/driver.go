@@ -8,5 +8,5 @@ import (
 )
 
 func init() {
-	sql.Register("dyn-sqlite3", dynsql.WrapDriver(&sqlite3.SQLiteDriver{}, SQLiteDialect(0)))
+	sql.Register("dyn-sqlite3", dynsql.WrapDriver(&sqlite3.SQLiteDriver{}, SQLite3Dialect(0)))
 }
