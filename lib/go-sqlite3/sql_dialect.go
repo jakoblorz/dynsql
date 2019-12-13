@@ -1,6 +1,7 @@
 package sqlite3
 
 import (
+	"database/sql"
 	"database/sql/driver"
 	"fmt"
 	"regexp"
@@ -60,6 +61,11 @@ func (s SQLite3Dialect) GetAllTableNames(x dynsql.ExecerQueryer) ([]string, erro
 	}
 	err = <-errCh
 	if err != nil {
+		sqlErr, ok := err.(interface{ Error() string })
+		if ok && sqlErr.Error() == "not an error" {
+			return nil, sql.ErrNoRows
+		}
+
 		return nil, err
 	}
 	return names, nil
@@ -83,6 +89,10 @@ func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQuer
 	}
 	err = <-errCh
 	if err != nil {
+		sqlErr, ok := err.(interface{ Error() string })
+		if ok && sqlErr.Error() == "not an error" {
+			return nil, sql.ErrNoRows
+		}
 		return nil, err
 	}
 
@@ -119,6 +129,12 @@ func (s SQLite3Dialect) CreateNewTable(tableName string, keys []string, x dynsql
 	query = query[2:]
 
 	_, err := x.Exec(fmt.Sprintf(CreateNewTableSQL, tableName, query), nil)
+	if err != nil {
+		sqlErr, ok := err.(interface{ Error() string })
+		if ok && sqlErr.Error() == "not an error" {
+			return nil
+		}
+	}
 	return err
 }
 
@@ -129,6 +145,12 @@ func (s SQLite3Dialect) AddColumnToTable(tableName, key string, x dynsql.ExecerQ
 	}
 
 	_, err := x.Exec(fmt.Sprintf(AlterTableAddColumnSQL, tableName), []driver.Value{key, t})
+	if err != nil {
+		sqlErr, ok := err.(interface{ Error() string })
+		if ok && sqlErr.Error() == "not an error" {
+			return nil
+		}
+	}
 	return err
 }
 

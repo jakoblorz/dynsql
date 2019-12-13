@@ -97,7 +97,7 @@ func Test(t *testing.T) {
 	tableName := "test"
 	log.Printf("%s\n", testJSON_s)
 	_, err = db.Exec(fmt.Sprintf("INSERT INTO %s JSON %s;", tableName, testJSON_s))
-	if !assert.NoError(t, err, "expected no error inserting custom JSON payload: %+v") {
+	if !assert.NoError(t, err, "expected no error inserting custom JSON payload: %+v", testJSON_m) {
 		t.FailNow()
 	}
 

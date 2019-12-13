@@ -1,8 +1,11 @@
 package dynsql
 
 import (
+	"context"
+	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"log"
 	"regexp"
 	"time"
 
@@ -76,6 +79,7 @@ func (c *Conn) toExecerQueryerPreparer() ExecerQueryerPreparer {
 }
 
 func (c *Conn) DoExec(query string, args ...driver.Value) (driver.Result, error) {
+	log.Printf("DoExec: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
 		return nil, err
@@ -84,6 +88,7 @@ func (c *Conn) DoExec(query string, args ...driver.Value) (driver.Result, error)
 }
 
 func (c *Conn) DoQuery(query string, args ...driver.Value) (driver.Rows, error) {
+	log.Printf("DoQuery: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
 		return nil, err
@@ -98,18 +103,20 @@ func (c *Conn) pollDatabaseData(lockDriver bool) error {
 	}
 
 	tableNames, err := c.d.SQL.GetAllTableNames(c.toExecerQueryerPreparer())
-	if err != nil {
+	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
 
 	schemas := map[string]map[string]string{}
-	for _, name := range tableNames {
-		schemas[name] = map[string]string{}
-	}
-	for tableName := range schemas {
-		schemas[tableName], err = c.d.SQL.GetAllTableColumns(tableName, c.toExecerQueryerPreparer())
-		if err != nil {
-			return err
+	if err != sql.ErrNoRows {
+		for _, name := range tableNames {
+			schemas[name] = map[string]string{}
+		}
+		for tableName := range schemas {
+			schemas[tableName], err = c.d.SQL.GetAllTableColumns(tableName, c.toExecerQueryerPreparer())
+			if err != nil {
+				return err
+			}
 		}
 	}
 	c.d.schemas = schemas
@@ -117,7 +124,13 @@ func (c *Conn) pollDatabaseData(lockDriver bool) error {
 	return nil
 }
 
+func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return c.Prepare(query)
+}
+
 func (c *Conn) Prepare(query string) (driver.Stmt, error) {
+	log.Println(query)
+
 	for _, head := range InsertJSONStatementHeads {
 		if len(query) < len(head) {
 			continue
@@ -135,7 +148,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			return nil, err
 		}
 
-		id, _ := uuid.NewV4()
+		id := uuid.NewV4()
 		values := []driver.Value{id.String(), time.Now(), time.Now()}
 		requiredKeys := InheritedFields
 
