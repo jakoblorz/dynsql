@@ -129,8 +129,6 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 }
 
 func (c *Conn) Prepare(query string) (driver.Stmt, error) {
-	log.Println(query)
-
 	for _, head := range InsertJSONStatementHeads {
 		if len(query) < len(head) {
 			continue
@@ -141,6 +139,9 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 
 		matches := obtainMatches([]string{"TABLE", "JSON"}, query, InsertJSONStatementRegex)
 		tableName, jsonPayload := matches[0], matches[1]
+		if jsonPayload[len(jsonPayload)-1] == ';' {
+			jsonPayload = jsonPayload[:len(jsonPayload)-1]
+		}
 
 		data := map[string]interface{}{}
 		err := json.Unmarshal([]byte(jsonPayload), &data)
@@ -148,7 +149,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			return nil, err
 		}
 
-		id := uuid.NewV4()
+		id, _ := uuid.NewV4()
 		values := []driver.Value{id.String(), time.Now(), time.Now()}
 		requiredKeys := InheritedFields
 
@@ -212,6 +213,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 		return c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
 	}
 
+	log.Println("Proceeding query on baseDriver")
 	return c.c.Prepare(query)
 }
 

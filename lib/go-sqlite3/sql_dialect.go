@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -15,7 +16,7 @@ const SelectAllTableNamesSQL = `SELECT name FROM sqlite_master
 	WHERE type = "table";`
 
 const SelectAllTableColumnsSQL = `SELECT sql FROM sqlite_master
-	WHERE type = "table" AND name = $1;`
+	WHERE type = "table" AND name = "%s";`
 
 const CreateNewTableSQL = `CREATE TABLE %s (
 	%s
@@ -60,7 +61,7 @@ func (s SQLite3Dialect) GetAllTableNames(x dynsql.ExecerQueryer) ([]string, erro
 		names = append(names, row[0].(string))
 	}
 	err = <-errCh
-	if err != nil {
+	if err != nil && err != io.EOF {
 		sqlErr, ok := err.(interface{ Error() string })
 		if ok && sqlErr.Error() == "not an error" {
 			return nil, sql.ErrNoRows
@@ -72,7 +73,7 @@ func (s SQLite3Dialect) GetAllTableNames(x dynsql.ExecerQueryer) ([]string, erro
 }
 
 func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQueryer) (map[string]string, error) {
-	rows, err := x.Query(SelectAllTableColumnsSQL, []driver.Value{tableName})
+	rows, err := x.Query(fmt.Sprintf(SelectAllTableColumnsSQL, tableName), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -85,10 +86,12 @@ func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQuer
 		if !ok {
 			break
 		}
-		stmts = append(stmts, row[0].(string))
+		if len(row) >= 1 {
+			stmts = append(stmts, row[0].(string))
+		}
 	}
 	err = <-errCh
-	if err != nil {
+	if err != nil && err != io.EOF {
 		sqlErr, ok := err.(interface{ Error() string })
 		if ok && sqlErr.Error() == "not an error" {
 			return nil, sql.ErrNoRows
@@ -96,8 +99,12 @@ func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQuer
 		return nil, err
 	}
 
-	sql := stmts[0]
 	v := map[string]string{}
+	if len(stmts) == 0 {
+		return v, nil
+	}
+
+	sql := stmts[0]
 	m := ColumnNameAndTypeRegex.FindStringSubmatch(sql)
 	for ; len(m) != 0; m = ColumnNameAndTypeRegex.FindStringSubmatch(sql) {
 		sql = strings.Replace(sql, m[0], "", -1)

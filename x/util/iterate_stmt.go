@@ -1,6 +1,8 @@
 package util
 
-import "database/sql/driver"
+import (
+	"database/sql/driver"
+)
 
 func IterateDriverRows(rows driver.Rows) (<-chan []driver.Value, <-chan error) {
 	valCh := make(chan []driver.Value)
