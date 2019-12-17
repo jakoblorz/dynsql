@@ -58,7 +58,9 @@ func (s SQLite3Dialect) GetAllTableNames(x dynsql.ExecerQueryer) ([]string, erro
 		if !ok {
 			break
 		}
-		names = append(names, row[0].(string))
+		if len(row) >= 1 {
+			names = append(names, row[0].(string))
+		}
 	}
 	err = <-errCh
 	if err != nil && err != io.EOF {

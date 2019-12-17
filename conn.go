@@ -151,6 +151,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 
 		id := uuid.NewV4()
 		values := []driver.Value{id.String(), time.Now(), time.Now()}
+		fixedArgsLen := len(values)
 		requiredKeys := InheritedFields
 
 		i := len(values) + 1
@@ -187,6 +188,11 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			}
 			defer c.d.mu.Unlock()
 
+			tx, err := c.Begin()
+			if err != nil {
+				return nil, err
+			}
+
 			if !ok {
 				// Create Table
 				err := c.d.SQL.CreateNewTable(tableName, requiredKeys, c.toExecerQueryerPreparer())
@@ -202,11 +208,6 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 					}
 				}
 			}
-
-			tx, err := c.Begin()
-			if err != nil {
-				return nil, err
-			}
 			err = tx.Commit()
 			if err != nil {
 				return nil, err
@@ -219,14 +220,18 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			c.d.schemas[tableName] = existingKeys
 		}
 
+		tx, err := c.Begin()
+		if err != nil {
+			return nil, err
+		}
+
 		stmt, err := c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
 		if err != nil {
 			return nil, err
 		}
-		return newStmt(stmt, values), err
-	}
 
-	log.Println("Proceeding query on baseDriver")
+		return newStmt(stmt, values, tx, fixedArgsLen), err
+	}
 	return c.c.Prepare(query)
 }
 
@@ -243,6 +248,7 @@ type connExecerQueryerPreparer struct {
 }
 
 func (c *connExecerQueryerPreparer) Prepare(query string) (driver.Stmt, error) {
+	log.Printf("Prepare: %+v\n", query)
 	return c.c.c.Prepare(query)
 }
 

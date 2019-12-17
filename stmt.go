@@ -2,15 +2,20 @@ package dynsql
 
 import (
 	"database/sql/driver"
+	"log"
+	"sync"
 )
 
 type Stmt struct {
-	s    driver.Stmt
-	args []driver.Value
+	s            driver.Stmt
+	fixedArgsLen int
+	args         []driver.Value
+	once         *sync.Once
+	tx           driver.Tx
 }
 
-func newStmt(s driver.Stmt, args []driver.Value) driver.Stmt {
-	return &Stmt{s, args}
+func newStmt(s driver.Stmt, args []driver.Value, tx driver.Tx, fixedArgsLen int) driver.Stmt {
+	return &Stmt{s, fixedArgsLen, args, &sync.Once{}, tx}
 }
 
 func (s *Stmt) overwriteArgs(argsNew []driver.Value) []driver.Value {
@@ -26,18 +31,26 @@ func (s *Stmt) overwriteArgs(argsNew []driver.Value) []driver.Value {
 	return argsOrg
 }
 
-func (s *Stmt) Close() error {
+func (s *Stmt) Close() (err error) {
+	s.once.Do(func() {
+		err = s.tx.Commit()
+	})
+	if err != nil {
+		log.Printf("%+v\n", err)
+	}
 	return s.s.Close()
 }
 
 func (s *Stmt) NumInput() int {
-	return s.s.NumInput()
+	return len(s.args) - s.fixedArgsLen
 }
 
 func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
-	return s.s.Exec(s.overwriteArgs(args))
+	args = s.overwriteArgs(args)
+	return s.s.Exec(args)
 }
 
 func (s *Stmt) Query(args []driver.Value) (driver.Rows, error) {
-	return s.s.Query(s.overwriteArgs(args))
+	args = s.overwriteArgs(args)
+	return s.s.Query(args)
 }
