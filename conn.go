@@ -54,7 +54,23 @@ func compareRequiredKeys(req []string, exists map[string]string) []string {
 }
 
 func newConn(d *Driver, dc driver.Conn) (*Conn, error) {
-	c := &Conn{d, dc}
+	c := &Conn{
+		d: d,
+		c: dc,
+	}
+
+	if execer, ok := dc.(driver.Execer); ok {
+		c.execer = execer
+	}
+	if execerCtx, ok := dc.(driver.ExecerContext); ok {
+		c.execerCtx = execerCtx
+	}
+	if queryer, ok := dc.(driver.Queryer); ok {
+		c.queryer = queryer
+	}
+	if queryerCtx, ok := dc.(driver.QueryerContext); ok {
+		c.queryerCtx = queryerCtx
+	}
 
 	c.d.mu.Lock()
 	defer c.d.mu.Unlock()
@@ -71,14 +87,40 @@ func newConn(d *Driver, dc driver.Conn) (*Conn, error) {
 
 type Conn struct {
 	d *Driver
+
 	c driver.Conn
+
+	execer    driver.Execer
+	execerCtx driver.ExecerContext
+
+	queryer    driver.Queryer
+	queryerCtx driver.QueryerContext
 }
 
 func (c *Conn) toExecerQueryerPreparer() ExecerQueryerPreparer {
 	return &connExecerQueryerPreparer{c}
 }
 
-func (c *Conn) DoExec(query string, args ...driver.Value) (driver.Result, error) {
+func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	_, _, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
+	if isExecJSONStatement {
+		return c.doExecOnLocalPrepare(query, args...)
+	}
+
+	if c.execer != nil {
+		return c.execer.Exec(query, args)
+	}
+	return c.doExec(query, args...)
+}
+
+func (c *Conn) Query(query string, args []driver.Value) (driver.Rows, error) {
+	if c.queryer != nil {
+		return c.queryer.Query(query, args)
+	}
+	return c.doQuery(query, args)
+}
+
+func (c *Conn) doExec(query string, args ...driver.Value) (driver.Result, error) {
 	log.Printf("DoExec: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
@@ -87,13 +129,41 @@ func (c *Conn) DoExec(query string, args ...driver.Value) (driver.Result, error)
 	return stmt.Exec(args)
 }
 
-func (c *Conn) DoQuery(query string, args ...driver.Value) (driver.Rows, error) {
+func (c *Conn) doExecOnLocalPrepare(query string, args ...driver.Value) (driver.Result, error) {
+	log.Printf("doExecOnLocalPrepare: %s with %+v\n", query, args)
+	stmt, err := c.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	return stmt.Exec(args)
+}
+
+func (c *Conn) doQuery(query string, args ...driver.Value) (driver.Rows, error) {
 	log.Printf("DoQuery: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
 		return nil, err
 	}
 	return stmt.Query(args)
+}
+
+func (c *Conn) isExecJSONInsertOnTable(query string) (string, string, bool) {
+	for _, head := range InsertJSONStatementHeads {
+		if len(query) < len(head) {
+			continue
+		}
+		if query[:len(head)] != head {
+			continue
+		}
+
+		matches := obtainMatches([]string{"TABLE", "JSON"}, query, InsertJSONStatementRegex)
+		tableName, jsonPayload := matches[0], matches[1]
+		if jsonPayload[len(jsonPayload)-1] == ';' {
+			jsonPayload = jsonPayload[:len(jsonPayload)-1]
+		}
+		return tableName, jsonPayload, true
+	}
+	return "", "", false
 }
 
 func (c *Conn) pollDatabaseData(lockDriver bool) error {
@@ -129,27 +199,15 @@ func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, e
 }
 
 func (c *Conn) Prepare(query string) (driver.Stmt, error) {
-	for _, head := range InsertJSONStatementHeads {
-		if len(query) < len(head) {
-			continue
-		}
-		if query[:len(head)] != head {
-			continue
-		}
-
-		matches := obtainMatches([]string{"TABLE", "JSON"}, query, InsertJSONStatementRegex)
-		tableName, jsonPayload := matches[0], matches[1]
-		if jsonPayload[len(jsonPayload)-1] == ';' {
-			jsonPayload = jsonPayload[:len(jsonPayload)-1]
-		}
-
+	tableName, jsonPayload, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
+	if isExecJSONStatement {
 		data := map[string]interface{}{}
 		err := json.Unmarshal([]byte(jsonPayload), &data)
 		if err != nil {
 			return nil, err
 		}
 
-		id := uuid.NewV4()
+		id, _ := uuid.NewV4()
 		values := []driver.Value{id.String(), time.Now(), time.Now()}
 		fixedArgsLen := len(values)
 		requiredKeys := InheritedFields
@@ -253,9 +311,15 @@ func (c *connExecerQueryerPreparer) Prepare(query string) (driver.Stmt, error) {
 }
 
 func (c *connExecerQueryerPreparer) Exec(query string, args []driver.Value) (driver.Result, error) {
-	return c.c.DoExec(query, args...)
+	if c.c.execer != nil {
+		return c.c.execer.Exec(query, args)
+	}
+	return c.c.doExec(query, args...)
 }
 
 func (c *connExecerQueryerPreparer) Query(query string, args []driver.Value) (driver.Rows, error) {
-	return c.c.DoQuery(query, args...)
+	if c.c.queryer != nil {
+		return c.c.queryer.Query(query, args)
+	}
+	return c.c.doQuery(query, args...)
 }
