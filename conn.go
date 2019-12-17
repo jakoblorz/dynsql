@@ -149,7 +149,7 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			return nil, err
 		}
 
-		id, _ := uuid.NewV4()
+		id := uuid.NewV4()
 		values := []driver.Value{id.String(), time.Now(), time.Now()}
 		requiredKeys := InheritedFields
 
@@ -203,6 +203,15 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 				}
 			}
 
+			tx, err := c.Begin()
+			if err != nil {
+				return nil, err
+			}
+			err = tx.Commit()
+			if err != nil {
+				return nil, err
+			}
+
 			existingKeys, err = c.d.SQL.GetAllTableColumns(tableName, c.toExecerQueryerPreparer())
 			if err != nil {
 				return nil, err
@@ -210,7 +219,11 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			c.d.schemas[tableName] = existingKeys
 		}
 
-		return c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
+		stmt, err := c.d.SQL.InsertValuesPrepare(tableName, requiredKeys, c.toExecerQueryerPreparer())
+		if err != nil {
+			return nil, err
+		}
+		return newStmt(stmt, values), err
 	}
 
 	log.Println("Proceeding query on baseDriver")

@@ -13,10 +13,10 @@ import (
 )
 
 const SelectAllTableNamesSQL = `SELECT name FROM sqlite_master 
-	WHERE type = "table";`
+	WHERE type = 'table';`
 
 const SelectAllTableColumnsSQL = `SELECT sql FROM sqlite_master
-	WHERE type = "table" AND name = "%s";`
+	WHERE type = 'table' AND name = '%s';`
 
 const CreateNewTableSQL = `CREATE TABLE %s (
 	%s
@@ -166,7 +166,7 @@ func (s SQLite3Dialect) InsertValuesPrepare(tableName string, keys []string, x d
 	placeholders := ""
 	for i, k := range keys {
 		columnNames = fmt.Sprintf("%s, %s", columnNames, k)
-		placeholders = fmt.Sprintf("%s, $%d", placeholders, i)
+		placeholders = fmt.Sprintf("%s, $%d", placeholders, i+1)
 	}
 	columnNames = columnNames[2:]
 	placeholders = placeholders[2:]

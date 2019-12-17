@@ -19,6 +19,8 @@ func (s *Stmt) overwriteArgs(argsNew []driver.Value) []driver.Value {
 		o := i + len(InheritedFields)
 		if o < len(argsOrg) {
 			argsOrg[o] = a
+		} else {
+			argsOrg = append(argsOrg, a)
 		}
 	}
 	return argsOrg
