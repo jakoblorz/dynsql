@@ -26,6 +26,14 @@ var (
 	}
 )
 
+type lockMode int
+
+const (
+	missLock lockMode = iota
+	readLock
+	writeLock
+)
+
 func obtainMatches(search []string, query string, r *regexp.Regexp) []string {
 	values := r.FindStringSubmatch(query)
 	keys := r.SubexpNames()
@@ -101,44 +109,19 @@ func (c *Conn) toExecerQueryerPreparer() ExecerQueryerPreparer {
 	return &connExecerQueryerPreparer{c}
 }
 
-func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
-	_, _, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
-	if isExecJSONStatement {
-		return c.doExecOnLocalPrepare(query, args...)
-	}
-
-	if c.execer != nil {
-		return c.execer.Exec(query, args)
-	}
-	return c.doExec(query, args...)
-}
-
-func (c *Conn) Query(query string, args []driver.Value) (driver.Rows, error) {
-	if c.queryer != nil {
-		return c.queryer.Query(query, args)
-	}
-	return c.doQuery(query, args)
-}
-
-func (c *Conn) doExec(query string, args ...driver.Value) (driver.Result, error) {
+func (c *Conn) doExec(query string, stmt driver.Stmt, args []driver.Value) (driver.Result, error) {
 	log.Printf("DoExec: %s with %+v\n", query, args)
-	stmt, err := c.c.Prepare(query)
-	if err != nil {
-		return nil, err
+	var err error
+	if stmt == nil {
+		stmt, err = c.c.Prepare(query)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return stmt.Exec(args)
 }
 
-func (c *Conn) doExecOnLocalPrepare(query string, args ...driver.Value) (driver.Result, error) {
-	log.Printf("doExecOnLocalPrepare: %s with %+v\n", query, args)
-	stmt, err := c.Prepare(query)
-	if err != nil {
-		return nil, err
-	}
-	return stmt.Exec(args)
-}
-
-func (c *Conn) doQuery(query string, args ...driver.Value) (driver.Rows, error) {
+func (c *Conn) doQuery(query string, args []driver.Value) (driver.Rows, error) {
 	log.Printf("DoQuery: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
@@ -194,12 +177,83 @@ func (c *Conn) pollDatabaseData(lockDriver bool) error {
 	return nil
 }
 
-func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	return c.Prepare(query)
+func (c *Conn) prepareDatabase(lockDriverMode lockMode, tableName string, requiredKeys []string) (err error) {
+	if lockDriverMode == missLock {
+		c.d.mu.RLock()
+		defer c.d.mu.RUnlock()
+	}
+
+	existingKeys, ok := c.d.schemas[tableName]
+	missingKeys := []string{}
+	if ok {
+		missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
+	}
+TEST_SLOW_PATH:
+	if !ok || len(missingKeys) > 0 {
+
+		// Slow Path: Switch Lock Type, then test again
+		if lockDriverMode != writeLock {
+			c.d.mu.RUnlock()
+			c.d.mu.Lock()
+		}
+		existingKeys, ok = c.d.schemas[tableName]
+		if ok {
+			missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
+		}
+		if ok && len(missingKeys) == 0 {
+
+			// somehow during lock switch there was an alteration
+			// no update to table schema required. Switch Lock Type
+			// and proceed with Fast Path
+			if lockDriverMode != writeLock {
+				c.d.mu.Unlock()
+				c.d.mu.RLock()
+			}
+			goto TEST_SLOW_PATH
+		}
+
+		if lockDriverMode != writeLock {
+			defer c.d.mu.RLock()
+			defer c.d.mu.Unlock()
+		}
+
+		var tx driver.Tx
+		tx, err = c.Begin()
+		if err != nil {
+			return
+		}
+
+		if !ok {
+			// Create Table
+			err = c.d.SQL.CreateNewTable(tableName, requiredKeys, c.toExecerQueryerPreparer())
+			if err != nil {
+				return
+			}
+		} else {
+			// Add missing column
+			for _, k := range missingKeys {
+				err = c.d.SQL.AddColumnToTable(tableName, k, c.toExecerQueryerPreparer())
+				if err != nil {
+					return
+				}
+			}
+		}
+		err = tx.Commit()
+		if err != nil {
+			return
+		}
+
+		existingKeys, err = c.d.SQL.GetAllTableColumns(tableName, c.toExecerQueryerPreparer())
+		if err != nil {
+			return
+		}
+		c.d.schemas[tableName] = existingKeys
+	}
+
+	return
 }
 
-func (c *Conn) Prepare(query string) (driver.Stmt, error) {
-	tableName, jsonPayload, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
+func (c *Conn) prepare(query, tableName, jsonPayload string, isExecJSONStatement bool) (driver.Stmt, error) {
 	if isExecJSONStatement {
 		data := map[string]interface{}{}
 		err := json.Unmarshal([]byte(jsonPayload), &data)
@@ -219,64 +273,12 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 			i++
 		}
 
-		// Fast Path
 		c.d.mu.RLock()
-		existingKeys, ok := c.d.schemas[tableName]
-		missingKeys := []string{}
-		if ok {
-			missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
+		err = c.prepareDatabase(readLock, tableName, requiredKeys)
+		if err != nil {
+			return nil, err
 		}
-	TEST_SLOW_PATH:
-		if !ok || len(missingKeys) > 0 {
-
-			// Slow Path: Switch Lock Type, then test again
-			c.d.mu.RUnlock()
-			c.d.mu.Lock()
-			existingKeys, ok = c.d.schemas[tableName]
-			if ok {
-				missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
-			}
-			if ok && len(missingKeys) == 0 {
-				// somehow during lock switch there was an alteration
-				// no update to table schema required. Switch Lock Type
-				// and proceed with Fast Path
-				c.d.mu.Unlock()
-				c.d.mu.RLock()
-				goto TEST_SLOW_PATH
-			}
-			defer c.d.mu.Unlock()
-
-			tx, err := c.Begin()
-			if err != nil {
-				return nil, err
-			}
-
-			if !ok {
-				// Create Table
-				err := c.d.SQL.CreateNewTable(tableName, requiredKeys, c.toExecerQueryerPreparer())
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				// Add missing column
-				for _, k := range missingKeys {
-					err = c.d.SQL.AddColumnToTable(tableName, k, c.toExecerQueryerPreparer())
-					if err != nil {
-						return nil, err
-					}
-				}
-			}
-			err = tx.Commit()
-			if err != nil {
-				return nil, err
-			}
-
-			existingKeys, err = c.d.SQL.GetAllTableColumns(tableName, c.toExecerQueryerPreparer())
-			if err != nil {
-				return nil, err
-			}
-			c.d.schemas[tableName] = existingKeys
-		}
+		defer c.d.mu.RUnlock()
 
 		tx, err := c.Begin()
 		if err != nil {
@@ -291,6 +293,40 @@ func (c *Conn) Prepare(query string) (driver.Stmt, error) {
 		return newStmt(stmt, values, tx, fixedArgsLen), err
 	}
 	return c.c.Prepare(query)
+}
+
+func (c *Conn) Exec(query string, args []driver.Value) (driver.Result, error) {
+	tableName, jsonPayload, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
+	var err error
+	var stmt driver.Stmt
+	if isExecJSONStatement {
+		stmt, err = c.prepare(query, tableName, jsonPayload, isExecJSONStatement)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if c.execer != nil && stmt == nil {
+		return c.execer.Exec(query, args)
+	}
+
+	return c.doExec(query, stmt, args)
+}
+
+func (c *Conn) Query(query string, args []driver.Value) (driver.Rows, error) {
+	if c.queryer != nil {
+		return c.queryer.Query(query, args)
+	}
+	return c.doQuery(query, args)
+}
+
+func (c *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	return c.Prepare(query)
+}
+
+func (c *Conn) Prepare(query string) (driver.Stmt, error) {
+	tableName, jsonPayload, isExecJSONStatement := c.isExecJSONInsertOnTable(query)
+	return c.prepare(query, tableName, jsonPayload, isExecJSONStatement)
 }
 
 func (c *Conn) Close() error {
@@ -312,14 +348,16 @@ func (c *connExecerQueryerPreparer) Prepare(query string) (driver.Stmt, error) {
 
 func (c *connExecerQueryerPreparer) Exec(query string, args []driver.Value) (driver.Result, error) {
 	if c.c.execer != nil {
+		log.Printf("execer.Exec: %s with %+v\n", query, args)
 		return c.c.execer.Exec(query, args)
 	}
-	return c.c.doExec(query, args...)
+	return c.c.doExec(query, nil, args)
 }
 
 func (c *connExecerQueryerPreparer) Query(query string, args []driver.Value) (driver.Rows, error) {
 	if c.c.queryer != nil {
+		log.Printf("queryer.Query: %s with %+v\n", query, args)
 		return c.c.queryer.Query(query, args)
 	}
-	return c.c.doQuery(query, args...)
+	return c.c.doQuery(query, args)
 }

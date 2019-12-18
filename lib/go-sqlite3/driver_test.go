@@ -102,6 +102,20 @@ func Test(t *testing.T) {
 		t.FailNow()
 	}
 
+	// r, err := db.Query("SELECT name FROM sqlite_master;")
+	// if !assert.NoError(t, err) {
+	// 	t.FailNow()
+	// }
+	// var dest interface{}
+	// r.Next()
+	// for err = r.Scan(&dest); err == nil && r.Next(); err = r.Scan(&dest) {
+	// 	log.Printf("%+v\n", dest)
+	// }
+	// r.Close()
+	// if !assert.NoError(t, err) {
+	// 	t.FailNow()
+	// }
+
 	dialect := SQLite3Dialect(0)
 	tables, err := dialect.GetAllTableNames(wrapRawConn(d.getLatestConn()))
 	if !assert.NoError(t, err, "expected no error when listing all tables") {
