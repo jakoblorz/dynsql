@@ -5,25 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
-	"log"
 	"regexp"
-	"time"
-
-	uuid "github.com/satori/go.uuid"
 )
 
 var (
 	InsertJSONStatementHeads = []string{"INSERT INTO", "Insert Into", "insert into"}
 	InsertJSONStatementRegex = regexp.MustCompile(`^(INSERT INTO|Insert Into|insert into)\s*(?P<TABLE>[\w\d]+)\s*(JSON|Json|json)\s*(?P<JSON>.*)\s*(\;*)$`)
-
-	InheritedIDField         = "_id"
-	InheritedInsertedAtField = "_inserted_at"
-	InheritedUpdatedAtField  = "_updated_at"
-	InheritedFields          = []string{
-		InheritedIDField,
-		InheritedInsertedAtField,
-		InheritedUpdatedAtField,
-	}
 )
 
 type lockMode int
@@ -110,7 +97,7 @@ func (c *Conn) toExecerQueryerPreparer() ExecerQueryerPreparer {
 }
 
 func (c *Conn) doExec(query string, stmt driver.Stmt, args []driver.Value) (driver.Result, error) {
-	log.Printf("DoExec: %s with %+v\n", query, args)
+	// log.Printf("DoExec: %s with %+v\n", query, args)
 	var err error
 	if stmt == nil {
 		stmt, err = c.c.Prepare(query)
@@ -122,7 +109,7 @@ func (c *Conn) doExec(query string, stmt driver.Stmt, args []driver.Value) (driv
 }
 
 func (c *Conn) doQuery(query string, args []driver.Value) (driver.Rows, error) {
-	log.Printf("DoQuery: %s with %+v\n", query, args)
+	// log.Printf("DoQuery: %s with %+v\n", query, args)
 	stmt, err := c.c.Prepare(query)
 	if err != nil {
 		return nil, err
@@ -261,12 +248,10 @@ func (c *Conn) prepare(query, tableName, jsonPayload string, isExecJSONStatement
 			return nil, err
 		}
 
-		id, _ := uuid.NewV4()
-		values := []driver.Value{id.String(), time.Now(), time.Now()}
-		fixedArgsLen := len(values)
-		requiredKeys := InheritedFields
+		values := []driver.Value{}
+		requiredKeys := []string{}
 
-		i := len(values) + 1
+		i := len(values)
 		for k, v := range data {
 			requiredKeys = append(requiredKeys, k)
 			values = append(values, v)
@@ -274,13 +259,8 @@ func (c *Conn) prepare(query, tableName, jsonPayload string, isExecJSONStatement
 		}
 
 		c.d.mu.RLock()
-		err = c.prepareDatabase(readLock, tableName, requiredKeys)
-		if err != nil {
-			return nil, err
-		}
 		defer c.d.mu.RUnlock()
-
-		tx, err := c.Begin()
+		err = c.prepareDatabase(readLock, tableName, requiredKeys)
 		if err != nil {
 			return nil, err
 		}
@@ -290,7 +270,7 @@ func (c *Conn) prepare(query, tableName, jsonPayload string, isExecJSONStatement
 			return nil, err
 		}
 
-		return newStmt(stmt, values, tx, fixedArgsLen), err
+		return newStmt(stmt, values), err
 	}
 	return c.c.Prepare(query)
 }
@@ -342,13 +322,13 @@ type connExecerQueryerPreparer struct {
 }
 
 func (c *connExecerQueryerPreparer) Prepare(query string) (driver.Stmt, error) {
-	log.Printf("Prepare: %+v\n", query)
+	// log.Printf("Prepare: %+v\n", query)
 	return c.c.c.Prepare(query)
 }
 
 func (c *connExecerQueryerPreparer) Exec(query string, args []driver.Value) (driver.Result, error) {
 	if c.c.execer != nil {
-		log.Printf("execer.Exec: %s with %+v\n", query, args)
+		// log.Printf("execer.Exec: %s with %+v\n", query, args)
 		return c.c.execer.Exec(query, args)
 	}
 	return c.c.doExec(query, nil, args)
@@ -356,7 +336,7 @@ func (c *connExecerQueryerPreparer) Exec(query string, args []driver.Value) (dri
 
 func (c *connExecerQueryerPreparer) Query(query string, args []driver.Value) (driver.Rows, error) {
 	if c.c.queryer != nil {
-		log.Printf("queryer.Query: %s with %+v\n", query, args)
+		// log.Printf("queryer.Query: %s with %+v\n", query, args)
 		return c.c.queryer.Query(query, args)
 	}
 	return c.c.doQuery(query, args)

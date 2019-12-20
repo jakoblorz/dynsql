@@ -13,33 +13,22 @@ import (
 )
 
 const SelectAllTableNamesSQL = `SELECT name FROM sqlite_master 
-	WHERE type = 'table';`
+WHERE type = 'table';`
 
-const SelectAllTableColumnsSQL = `SELECT sql FROM sqlite_master
-	WHERE type = 'table' AND name = '%s';`
+const SelectAllTableColumnsSQL = `SELECT sql FROM sqlite_master 
+WHERE type = 'table' AND name = '%s';`
 
-const CreateNewTableSQL = `CREATE TABLE %s (
-	%s
-);`
+const CreateNewTableSQL = `CREATE TABLE %s (%s);`
 
-const AlterTableAddColumnSQL = `ALTER TABLE %s
-	ADD COLUMN $1 $2;`
+const AlterTableAddColumnSQL = `ALTER TABLE %s ADD COLUMN %s %s;`
 
-const InsertValuesSQL = `INSERT INTO %s (
-	%s
-) VALUES (
-	%s
-);`
+const InsertValuesSQL = `INSERT INTO %s (%s) VALUES (%s);`
 
 const DefaultFallbackType = "TEXT"
 
 var (
-	DefaultTypeMap = map[string]string{
-		dynsql.InheritedIDField:         fmt.Sprintf("%s PRIMARY KEY", DefaultFallbackType),
-		dynsql.InheritedUpdatedAtField:  DefaultFallbackType,
-		dynsql.InheritedInsertedAtField: DefaultFallbackType,
-	}
-	ColumnNameAndTypeRegex = regexp.MustCompile(`(?:\(|\,\s*)(?P<Key>[a-zA-Z\_\-]+)(?:\s*)(?P<Type>[a-zA-Z\_\-]+)(?:\s*)`)
+	DefaultTypeMap         = map[string]string{}
+	ColumnNameAndTypeRegex = regexp.MustCompile(`(?:\(|\,\s*|\t)(?P<Key>[a-zA-Z\_\-]+)(?:\s*)(?P<Type>[a-zA-Z\_\-]+)(?:\s*)`)
 )
 
 type SQLite3Dialect int
@@ -120,7 +109,7 @@ func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQuer
 				typ = m[i]
 			}
 		}
-		v[key] = typ
+		v[strings.TrimSpace(key)] = typ
 	}
 
 	return v, nil
@@ -136,8 +125,9 @@ func (s SQLite3Dialect) CreateNewTable(tableName string, keys []string, x dynsql
 		query = fmt.Sprintf("%s, %s %s", query, k, t)
 	}
 	query = query[2:]
+	query = fmt.Sprintf(CreateNewTableSQL, tableName, query)
 
-	_, err := x.Exec(fmt.Sprintf(CreateNewTableSQL, tableName, query), nil)
+	_, err := x.Exec(query, nil)
 	if err != nil {
 		sqlErr, ok := err.(interface{ Error() string })
 		if ok && sqlErr.Error() == "not an error" {
@@ -153,7 +143,9 @@ func (s SQLite3Dialect) AddColumnToTable(tableName, key string, x dynsql.ExecerQ
 		t = DefaultFallbackType
 	}
 
-	_, err := x.Exec(fmt.Sprintf(AlterTableAddColumnSQL, tableName), []driver.Value{key, t})
+	query := fmt.Sprintf(AlterTableAddColumnSQL, tableName, key, t)
+
+	_, err := x.Exec(query, nil)
 	if err != nil {
 		sqlErr, ok := err.(interface{ Error() string })
 		if ok && sqlErr.Error() == "not an error" {
@@ -166,12 +158,13 @@ func (s SQLite3Dialect) AddColumnToTable(tableName, key string, x dynsql.ExecerQ
 func (s SQLite3Dialect) InsertValuesPrepare(tableName string, keys []string, x dynsql.ExecerQueryerPreparer) (driver.Stmt, error) {
 	columnNames := ""
 	placeholders := ""
-	for i, k := range keys {
+	for _, k := range keys {
 		columnNames = fmt.Sprintf("%s, %s", columnNames, k)
-		placeholders = fmt.Sprintf("%s, $%d", placeholders, i+1)
+		placeholders = fmt.Sprintf("%s, ?", placeholders)
 	}
 	columnNames = columnNames[2:]
 	placeholders = placeholders[2:]
 
-	return x.Prepare(fmt.Sprintf(InsertValuesSQL, tableName, columnNames, placeholders))
+	query := fmt.Sprintf(InsertValuesSQL, tableName, columnNames, placeholders)
+	return x.Prepare(query)
 }

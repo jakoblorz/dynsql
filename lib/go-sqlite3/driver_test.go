@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/jakoblorz/dynsql"
-	"github.com/jakoblorz/dynsql/x/util"
 
 	sqlite3 "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
@@ -97,7 +96,7 @@ func Test(t *testing.T) {
 
 	tableName := "test"
 	log.Printf("%s\n", testJSON_s)
-	_, err = db.Exec(fmt.Sprintf("INSERT INTO %s JSON %s;", tableName, testJSON_s), util.ToPlainValues(testJSON_m)...)
+	_, err = db.Exec(fmt.Sprintf("INSERT INTO %s JSON %s;", tableName, testJSON_s))
 	if !assert.NoError(t, err, "expected no error inserting custom JSON payload: %+v", testJSON_m) {
 		t.FailNow()
 	}

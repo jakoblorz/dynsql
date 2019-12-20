@@ -2,28 +2,22 @@ package dynsql
 
 import (
 	"database/sql/driver"
-	"log"
-	"sync"
 )
 
 type Stmt struct {
-	s            driver.Stmt
-	fixedArgsLen int
-	args         []driver.Value
-	once         *sync.Once
-	tx           driver.Tx
+	s    driver.Stmt
+	args []driver.Value
 }
 
-func newStmt(s driver.Stmt, args []driver.Value, tx driver.Tx, fixedArgsLen int) driver.Stmt {
-	return &Stmt{s, fixedArgsLen, args, &sync.Once{}, tx}
+func newStmt(s driver.Stmt, args []driver.Value) driver.Stmt {
+	return &Stmt{s, args}
 }
 
 func (s *Stmt) overwriteArgs(argsNew []driver.Value) []driver.Value {
 	argsOrg := s.args
 	for i, a := range argsNew {
-		o := i + len(InheritedFields)
-		if o < len(argsOrg) {
-			argsOrg[o] = a
+		if i < len(argsOrg) {
+			argsOrg[i] = a
 		} else {
 			argsOrg = append(argsOrg, a)
 		}
@@ -32,17 +26,11 @@ func (s *Stmt) overwriteArgs(argsNew []driver.Value) []driver.Value {
 }
 
 func (s *Stmt) Close() (err error) {
-	s.once.Do(func() {
-		err = s.tx.Commit()
-	})
-	if err != nil {
-		log.Printf("%+v\n", err)
-	}
 	return s.s.Close()
 }
 
 func (s *Stmt) NumInput() int {
-	return len(s.args) - s.fixedArgsLen
+	return len(s.args)
 }
 
 func (s *Stmt) Exec(args []driver.Value) (driver.Result, error) {
