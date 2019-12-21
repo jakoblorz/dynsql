@@ -5,12 +5,13 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"log"
 	"regexp"
 )
 
 var (
 	InsertJSONStatementHeads = []string{"INSERT INTO", "Insert Into", "insert into"}
-	InsertJSONStatementRegex = regexp.MustCompile(`^(INSERT INTO|Insert Into|insert into)\s*(?P<TABLE>[\w\d]+)\s*(JSON|Json|json)\s*(?P<JSON>.*)\s*(\;*)$`)
+	InsertJSONStatementRegex = regexp.MustCompile(`^(INSERT INTO|Insert Into|insert into)\s*(?P<TABLE>[\w\d\_]+)\s*(JSON|Json|json)\s*(?P<JSON>.*)\s*(\;*)$`)
 )
 
 type lockMode int
@@ -37,15 +38,18 @@ func obtainMatches(search []string, query string, r *regexp.Regexp) []string {
 	return data
 }
 
-func compareRequiredKeys(req []string, exists map[string]string) []string {
-	missing := []string{}
-	for _, r := range req {
+func compareRequiredKeys(req []string, t []JSONType, exists map[string]string) ([]string, []JSONType) {
+	missingKeys := []string{}
+	missingTypes := []JSONType{}
+
+	for i, r := range req {
 		_, ok := exists[r]
 		if !ok {
-			missing = append(missing, r)
+			missingKeys = append(missingKeys, r)
+			missingTypes = append(missingTypes, t[i])
 		}
 	}
-	return missing
+	return missingKeys, missingTypes
 }
 
 func newConn(d *Driver, dc driver.Conn) (*Conn, error) {
@@ -164,7 +168,7 @@ func (c *Conn) pollDatabaseData(lockDriver bool) error {
 	return nil
 }
 
-func (c *Conn) prepareDatabase(lockDriverMode lockMode, tableName string, requiredKeys []string) (err error) {
+func (c *Conn) prepareDatabase(lockDriverMode lockMode, tableName string, requiredKeys []string, requiredTypes []JSONType) (err error) {
 	if lockDriverMode == missLock {
 		c.d.mu.RLock()
 		defer c.d.mu.RUnlock()
@@ -172,8 +176,9 @@ func (c *Conn) prepareDatabase(lockDriverMode lockMode, tableName string, requir
 
 	existingKeys, ok := c.d.schemas[tableName]
 	missingKeys := []string{}
+	missingTypes := []JSONType{}
 	if ok {
-		missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
+		missingKeys, missingTypes = compareRequiredKeys(requiredKeys, requiredTypes, existingKeys)
 	}
 TEST_SLOW_PATH:
 	if !ok || len(missingKeys) > 0 {
@@ -185,7 +190,7 @@ TEST_SLOW_PATH:
 		}
 		existingKeys, ok = c.d.schemas[tableName]
 		if ok {
-			missingKeys = compareRequiredKeys(requiredKeys, existingKeys)
+			missingKeys, missingTypes = compareRequiredKeys(requiredKeys, requiredTypes, existingKeys)
 		}
 		if ok && len(missingKeys) == 0 {
 
@@ -212,14 +217,14 @@ TEST_SLOW_PATH:
 
 		if !ok {
 			// Create Table
-			err = c.d.SQL.CreateNewTable(tableName, requiredKeys, c.toExecerQueryerPreparer())
+			err = c.d.SQL.CreateNewTable(tableName, requiredKeys, requiredTypes, c.toExecerQueryerPreparer())
 			if err != nil {
 				return
 			}
 		} else {
 			// Add missing column
-			for _, k := range missingKeys {
-				err = c.d.SQL.AddColumnToTable(tableName, k, c.toExecerQueryerPreparer())
+			for i, k := range missingKeys {
+				err = c.d.SQL.AddColumnToTable(tableName, k, missingTypes[i], c.toExecerQueryerPreparer())
 				if err != nil {
 					return
 				}
@@ -250,17 +255,26 @@ func (c *Conn) prepare(query, tableName, jsonPayload string, isExecJSONStatement
 
 		values := []driver.Value{}
 		requiredKeys := []string{}
+		requiredValues := []JSONType{}
 
 		i := len(values)
 		for k, v := range data {
-			requiredKeys = append(requiredKeys, k)
+			jsonValue, ok := obtainJSONType(v)
+			if !ok {
+				log.Printf("Found key %s with invalid type or multi-layered value %+v, skipping\n", k, v)
+				continue
+			}
+
 			values = append(values, v)
+			requiredKeys = append(requiredKeys, k)
+			requiredValues = append(requiredValues, jsonValue)
+
 			i++
 		}
 
 		c.d.mu.RLock()
 		defer c.d.mu.RUnlock()
-		err = c.prepareDatabase(readLock, tableName, requiredKeys)
+		err = c.prepareDatabase(readLock, tableName, requiredKeys, requiredValues)
 		if err != nil {
 			return nil, err
 		}

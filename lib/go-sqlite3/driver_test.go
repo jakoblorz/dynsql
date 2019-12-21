@@ -131,7 +131,10 @@ func Test(t *testing.T) {
 		if !assert.Contains(t, columns, k) {
 			t.FailNow()
 		}
-		if !assert.Equal(t, columns[k], DefaultFallbackType) {
+		if k == "age" && !assert.Equal(t, "NUMBER", columns[k]) {
+			t.FailNow()
+		}
+		if k == "name" && !assert.Equal(t, "TEXT", columns[k]) {
 			t.FailNow()
 		}
 	}

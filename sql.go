@@ -16,8 +16,8 @@ type SQLDialect interface {
 	GetAllTableNames(x ExecerQueryer) ([]string, error)
 	GetAllTableColumns(tableName string, x ExecerQueryer) (map[string]string, error)
 
-	CreateNewTable(table string, keys []string, x ExecerQueryer) error
-	AddColumnToTable(table, key string, x ExecerQueryer) error
+	CreateNewTable(table string, keys []string, types []JSONType, x ExecerQueryer) error
+	AddColumnToTable(table, key string, t JSONType, x ExecerQueryer) error
 
 	InsertValuesPrepare(table string, keys []string, x ExecerQueryerPreparer) (driver.Stmt, error)
 }

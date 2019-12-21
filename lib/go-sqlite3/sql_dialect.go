@@ -27,7 +27,12 @@ const InsertValuesSQL = `INSERT INTO %s (%s) VALUES (%s);`
 const DefaultFallbackType = "TEXT"
 
 var (
-	DefaultTypeMap         = map[string]string{}
+	DefaultTypeMap      = map[string]string{}
+	JSONTypeTranslation = map[dynsql.JSONType]string{
+		dynsql.JSONBoolean: "BOOLEAN",
+		dynsql.JSONNumber:  "NUMBER",
+		dynsql.JSONString:  "TEXT",
+	}
 	ColumnNameAndTypeRegex = regexp.MustCompile(`(?:\(|\,\s*|\t)(?P<Key>[a-zA-Z\_\-]+)(?:\s*)(?P<Type>[a-zA-Z\_\-]+)(?:\s*)`)
 )
 
@@ -115,10 +120,13 @@ func (s SQLite3Dialect) GetAllTableColumns(tableName string, x dynsql.ExecerQuer
 	return v, nil
 }
 
-func (s SQLite3Dialect) CreateNewTable(tableName string, keys []string, x dynsql.ExecerQueryer) error {
+func (s SQLite3Dialect) CreateNewTable(tableName string, keys []string, types []dynsql.JSONType, x dynsql.ExecerQueryer) error {
 	query := ""
-	for _, k := range keys {
+	for i, k := range keys {
 		t, ok := DefaultTypeMap[k]
+		if !ok {
+			t, ok = JSONTypeTranslation[types[i]]
+		}
 		if !ok {
 			t = DefaultFallbackType
 		}
@@ -137,8 +145,11 @@ func (s SQLite3Dialect) CreateNewTable(tableName string, keys []string, x dynsql
 	return err
 }
 
-func (s SQLite3Dialect) AddColumnToTable(tableName, key string, x dynsql.ExecerQueryer) error {
+func (s SQLite3Dialect) AddColumnToTable(tableName, key string, jt dynsql.JSONType, x dynsql.ExecerQueryer) error {
 	t, ok := DefaultTypeMap[key]
+	if !ok {
+		t, ok = JSONTypeTranslation[jt]
+	}
 	if !ok {
 		t = DefaultFallbackType
 	}
@@ -166,5 +177,6 @@ func (s SQLite3Dialect) InsertValuesPrepare(tableName string, keys []string, x d
 	placeholders = placeholders[2:]
 
 	query := fmt.Sprintf(InsertValuesSQL, tableName, columnNames, placeholders)
+	// log.Println(query)
 	return x.Prepare(query)
 }
